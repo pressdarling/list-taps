@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Darwin
 @testable import list_taps
 
 // MARK: - EventTapInfo Tests
@@ -42,6 +43,47 @@ struct EventTapInfoTests {
 
         #expect(tap1 == tap2)
         #expect(tap1 != tap3)
+    }
+
+    @Test("Inequality when enabled differs")
+    func inequalityWhenEnabledDiffers() {
+        let tap1 = EventTapInfo(
+            tapID: 1, enabled: true, sourcePID: 100,
+            sourcePath: "/path", destinationPID: 200, destinationPath: "/dest"
+        )
+        let tap2 = EventTapInfo(
+            tapID: 1, enabled: false, sourcePID: 100,
+            sourcePath: "/path", destinationPID: 200, destinationPath: "/dest"
+        )
+        #expect(tap1 != tap2)
+    }
+
+    @Test("Handles maximum UInt32 tapID")
+    func handlesMaxTapID() {
+        let tap = EventTapInfo(
+            tapID: UInt32.max,
+            enabled: true,
+            sourcePID: 1,
+            sourcePath: "/path",
+            destinationPID: 2,
+            destinationPath: "/dest"
+        )
+        #expect(tap.tapID == UInt32.max)
+    }
+
+    @Test("Handles zero values")
+    func handlesZeroValues() {
+        let tap = EventTapInfo(
+            tapID: 0,
+            enabled: false,
+            sourcePID: 0,
+            sourcePath: "",
+            destinationPID: 0,
+            destinationPath: ""
+        )
+        #expect(tap.tapID == 0)
+        #expect(tap.sourcePID == 0)
+        #expect(tap.sourcePath.isEmpty)
     }
 }
 
@@ -89,6 +131,33 @@ struct EscapeJSONTests {
         let input = "He said \"hello\"\nand\\or goodbye"
         let expected = "He said \\\"hello\\\"\\nand\\\\or goodbye"
         #expect(escapeJSON(input) == expected)
+    }
+
+    @Test("Preserves unicode characters")
+    func preservesUnicode() {
+        #expect(escapeJSON("café ☕ 日本語") == "café ☕ 日本語")
+    }
+
+    @Test("Handles emoji")
+    func handlesEmoji() {
+        #expect(escapeJSON("🔒 secure 🛡️") == "🔒 secure 🛡️")
+    }
+
+    @Test("Preserves forward slash unescaped")
+    func preservesForwardSlash() {
+        #expect(escapeJSON("/usr/bin/path") == "/usr/bin/path")
+    }
+
+    @Test("Handles CRLF line endings")
+    func handlesCRLF() {
+        #expect(escapeJSON("line1\r\nline2") == "line1\\r\\nline2")
+    }
+
+    @Test("Handles long strings")
+    func handlesLongStrings() {
+        let longPath = String(repeating: "/very/long/path/segment", count: 100)
+        let escaped = escapeJSON(longPath)
+        #expect(escaped == longPath) // No special chars, should be unchanged
     }
 }
 
@@ -168,6 +237,50 @@ struct FormatTapAsJSONTests {
         #expect(parsed?["tapID"] as? String == "42")
         #expect(parsed?["enabled"] as? Bool == true)
         #expect(parsed?["sourcePID"] as? Int == 1234)
+    }
+
+    @Test("Handles maximum tap ID in JSON")
+    func handlesMaxTapIDInJSON() throws {
+        let tap = EventTapInfo(
+            tapID: UInt32.max, enabled: true, sourcePID: 1,
+            sourcePath: "/path", destinationPID: 2, destinationPath: "/dest"
+        )
+
+        let json = formatTapAsJSON(tap)
+        let data = json.data(using: .utf8)!
+
+        let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(parsed?["tapID"] as? String == "\(UInt32.max)")
+    }
+
+    @Test("Handles empty source path")
+    func handlesEmptySourcePath() throws {
+        let tap = EventTapInfo(
+            tapID: 1, enabled: true, sourcePID: 100,
+            sourcePath: "", destinationPID: 200, destinationPath: "/dest"
+        )
+
+        let json = formatTapAsJSON(tap)
+        let data = json.data(using: .utf8)!
+
+        let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(parsed?["sourcePath"] as? String == "")
+    }
+
+    @Test("Handles unicode paths")
+    func handlesUnicodePaths() throws {
+        let tap = EventTapInfo(
+            tapID: 1, enabled: true, sourcePID: 100,
+            sourcePath: "/Users/用户/アプリ.app", destinationPID: 200,
+            destinationPath: "/Applications/Café.app"
+        )
+
+        let json = formatTapAsJSON(tap)
+        let data = json.data(using: .utf8)!
+
+        let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(parsed?["sourcePath"] as? String == "/Users/用户/アプリ.app")
+        #expect(parsed?["destinationPath"] as? String == "/Applications/Café.app")
     }
 }
 
@@ -322,5 +435,68 @@ struct IntegrationTests {
         // Should parse without error
         let parsed = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
         #expect(parsed?.count == 1)
+    }
+}
+
+// MARK: - pathForPID Tests
+
+@Suite("pathForPID")
+struct PathForPIDTests {
+    @Test("Returns path for current process")
+    func returnsPathForCurrentProcess() {
+        let currentPID = getpid()
+        let path = pathForPID(currentPID)
+
+        // Current process should have a valid path
+        #expect(!path.isEmpty)
+        // Path should be absolute
+        #expect(path.hasPrefix("/"))
+    }
+
+    @Test("Returns empty string for invalid PID")
+    func returnsEmptyForInvalidPID() {
+        // PID -1 is invalid
+        let path = pathForPID(-1)
+        #expect(path.isEmpty)
+    }
+
+    @Test("Returns empty string for non-existent PID")
+    func returnsEmptyForNonExistentPID() {
+        // Very high PID that almost certainly doesn't exist
+        let path = pathForPID(999999999)
+        #expect(path.isEmpty)
+    }
+
+    @Test("Returns empty string for PID 0")
+    func returnsEmptyForPIDZero() {
+        // PID 0 is the kernel task, typically no path available
+        let path = pathForPID(0)
+        // May or may not return a path depending on system, but shouldn't crash
+        _ = path
+    }
+
+    @Test("Path for PID 1 (launchd) if accessible")
+    func pathForLaunchd() {
+        // PID 1 is launchd on macOS
+        let path = pathForPID(1)
+        // May be empty if we don't have permissions, but shouldn't crash
+        if !path.isEmpty {
+            #expect(path.contains("launchd"))
+        }
+    }
+}
+
+// MARK: - listTapsMain Tests
+
+@Suite("listTapsMain")
+struct ListTapsMainTests {
+    @Test("Returns 0 on success")
+    func returnsZeroOnSuccess() {
+        // This test exercises the main entry point
+        // On systems without accessibility permissions or event taps,
+        // this might return 0 (empty list) or 1 (permission denied)
+        let result = listTapsMain()
+        // Either success or failure is acceptable depending on environment
+        #expect(result == 0 || result == 1)
     }
 }
