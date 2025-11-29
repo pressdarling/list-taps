@@ -50,9 +50,14 @@ let taps = getTaps()
 if jsonOut {
     let enc = JSONEncoder()
     enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-    let data = try! enc.encode(taps)
+    guard let data = try? enc.encode(taps) else {
+        fputs("Error: Failed to encode taps to JSON\n", stderr)
+        exit(1)
+    }
     FileHandle.standardOutput.write(data)
-    FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+    if let newline = "\n".data(using: .utf8) {
+        FileHandle.standardOutput.write(newline)
+    }
 } else {
     if taps.isEmpty {
         print("[]  (no event taps)")

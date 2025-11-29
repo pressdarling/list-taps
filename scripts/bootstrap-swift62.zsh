@@ -32,6 +32,6 @@ if [[ -x "$binpath" ]]; then
   echo "Example: $binpath --json | jq ."
 else
   echo "Install failed; falling back to copying."
-  cp -f .build/release/${product} /usr/local/bin/${product}
+  sudo cp -f .build/release/${product} /usr/local/bin/${product}
   echo "Installed: /usr/local/bin/${product}"
 fi
