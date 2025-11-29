@@ -1,6 +1,7 @@
 import Testing
-@testable import list_taps
 
 @Test func example() async throws {
-    // Write your test here and use APIs like `#expect(...)` to check expected conditions.
+    // Placeholder test - list-taps is an executable target
+    // Integration tests would run the binary and verify JSON output
+    #expect(true)
 }
